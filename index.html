@@ -72,13 +72,13 @@
       transition: background 0.2s;
     }
     button[type="submit"]:hover { background: #2563eb; }
+    button[type="submit"]:disabled { background: #93c5fd; cursor: not-allowed; }
     .success {
       display: none; text-align: center; padding: 28px;
       background: #f0fdf4; border: 1.5px solid #86efac;
       border-radius: 12px; color: #166534;
     }
     .success h2 { font-size: 1.4rem; margin-bottom: 8px; }
-    /* Admin panel */
     .admin-toggle {
       margin-top: 32px; font-size: 0.82rem; color: #9ca3af;
       cursor: pointer; text-align: center; text-decoration: underline;
@@ -97,11 +97,6 @@
       color: #fff; border: none; border-radius: 8px; cursor: pointer;
       font-size: 0.88rem; font-weight: 600;
     }
-    .btn-clear {
-      margin-top: 14px; margin-left: 10px; padding: 9px 20px;
-      background: #ef4444; color: #fff; border: none; border-radius: 8px;
-      cursor: pointer; font-size: 0.88rem; font-weight: 600;
-    }
     .settings-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
     .settings-row label { font-size: 0.9rem; color: #1a3c5e; font-weight: 600; }
     .settings-row input { width: 80px; }
@@ -115,20 +110,16 @@
   <p class="subtitle">Попълнете данните, за да резервирате вашия час</p>
 
   <form id="laundry-form">
-
-    <!-- Имe -->
     <div class="field">
       <label class="block" for="name">Вашето име *</label>
       <input type="text" id="name" placeholder="Иван Петров" required />
     </div>
 
-    <!-- Телефон -->
     <div class="field">
       <label class="block" for="phone">Телефон *</label>
       <input type="tel" id="phone" placeholder="+359 88 888 8888" required />
     </div>
 
-    <!-- Услуги -->
     <div class="field">
       <label class="block">Какви услуги желаете? *</label>
       <div class="checkbox-group">
@@ -139,33 +130,29 @@
       </div>
     </div>
 
-    <!-- Тегло -->
     <div class="field">
       <label class="block" for="weight">Приблизително тегло (кг) *</label>
       <input type="number" id="weight" min="1" max="30" step="0.5" placeholder="напр. 5" required />
     </div>
 
-    <!-- Авт. изчисление -->
     <div class="info-box" id="estimate-box" style="display:none">
       ⏱️ Очаквано време: <span id="est-time">—</span> &nbsp;|&nbsp;
       💰 Цена: <span id="est-price">—</span>
     </div>
 
-    <!-- Час -->
     <div class="field">
       <label class="block">Изберете час *</label>
-      <div class="slot-grid" id="slot-grid"></div>
+      <div class="slot-grid" id="slot-grid"><p style="color:#6b7a8d;font-size:0.9rem">Зареждане...</p></div>
       <input type="hidden" id="chosen-slot" required />
       <p class="note">Заетите часове са маркирани в червено.</p>
     </div>
 
-    <!-- Бележки -->
     <div class="field">
       <label class="block" for="notes">Допълнителни бележки</label>
       <input type="text" id="notes" placeholder="напр. алергия към определен препарат..." />
     </div>
 
-    <button type="submit">✅ Изпрати резервацията</button>
+    <button type="submit" id="submit-btn">✅ Изпрати резервацията</button>
   </form>
 
   <div class="success" id="success-msg">
@@ -197,15 +184,32 @@
         <th>Услуги</th><th>Кг</th><th>Цена</th><th>Бележка</th>
       </tr>
     </thead>
-    <tbody id="reservations-body"></tbody>
+    <tbody id="reservations-body"><tr><td colspan="8" style="color:#9ca3af;padding:16px">Зареждане...</td></tr></tbody>
   </table>
 
   <button class="btn-export" onclick="exportCSV()">⬇ Изтегли CSV</button>
-  <button class="btn-clear" onclick="clearAll()">🗑 Изчисти всичко</button>
 </div>
 
 <script>
-// ── Settings ──────────────────────────────────────────────
+const SUPABASE_URL = 'https://ybydzrcifhoxowpaoqtx.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlieWR6cmNpZmhveG93cGFvcXR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyNjEzMTMsImV4cCI6MjA5NjgzNzMxM30.EegdMtybGXuf6LCb0DfND2Fm-0jq26WxQVyvsN7DXpc';
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': options.prefer || 'return=representation',
+      ...options.headers,
+    },
+    ...options,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.status === 204 ? [] : res.json();
+}
+
+// ── Settings (localStorage за бързина) ────────────────────
 function getSettings() {
   return {
     minPerKg: parseFloat(localStorage.getItem('minPerKg') || '6'),
@@ -224,44 +228,35 @@ function saveSettings() {
   renderSlots();
 }
 
-// ── Reservations storage ──────────────────────────────────
-function getReservations() {
-  return JSON.parse(localStorage.getItem('reservations') || '[]');
-}
-function saveReservation(r) {
-  const list = getReservations();
-  list.push(r);
-  localStorage.setItem('reservations', JSON.stringify(list));
-}
-
-// ── Today's date string ───────────────────────────────────
+// ── Today ─────────────────────────────────────────────────
 function todayStr() {
-  return new Date().toISOString().slice(0,10);
+  return new Date().toISOString().slice(0, 10);
 }
 
-// ── Occupied slots for today ──────────────────────────────
-function takenSlotsToday() {
-  const today = todayStr();
+// ── Fetch today's reservations from Supabase ──────────────
+async function fetchTodayReservations() {
+  return sbFetch(`reservations?date=eq.${todayStr()}&select=slot,weight`, {
+    prefer: 'return=representation',
+  });
+}
+
+// ── Occupied slots ────────────────────────────────────────
+function calcTakenSlots(reservations) {
   const { minPerKg } = getSettings();
-  const reservations = getReservations().filter(r => r.date === today);
-  // For each reservation mark every slot it occupies
   const occupied = new Set();
   reservations.forEach(r => {
-    const startH = parseInt(r.slot.split(':')[0]);
-    const startM = parseInt(r.slot.split(':')[1]);
+    const [hh, mm] = r.slot.split(':').map(Number);
     const durationMin = Math.ceil(r.weight * minPerKg);
-    const totalMin = startH * 60 + startM + durationMin;
-    // Mark every 30-min block within the duration
-    for (let m = startH * 60 + startM; m < totalMin; m += 30) {
-      const hh = String(Math.floor(m / 60)).padStart(2,'0');
-      const mm = String(m % 60).padStart(2,'0');
-      occupied.add(`${hh}:${mm}`);
+    for (let t = hh * 60 + mm; t < hh * 60 + mm + durationMin; t += 30) {
+      const h = String(Math.floor(t / 60)).padStart(2, '0');
+      const m = String(t % 60).padStart(2, '0');
+      occupied.add(`${h}:${m}`);
     }
   });
   return occupied;
 }
 
-// ── Generate time slots 08:00 – 22:00 (30-min steps) ─────
+// ── Generate slots 08:00–22:00 ────────────────────────────
 function generateSlots() {
   const slots = [];
   for (let h = 8; h < 22; h++) {
@@ -272,19 +267,24 @@ function generateSlots() {
 }
 
 // ── Render slots ──────────────────────────────────────────
-function renderSlots() {
+async function renderSlots() {
   const grid = document.getElementById('slot-grid');
-  const taken = takenSlotsToday();
   const chosen = document.getElementById('chosen-slot').value;
+  let taken = new Set();
+  try {
+    const data = await fetchTodayReservations();
+    taken = calcTakenSlots(data);
+  } catch(e) { console.error(e); }
+
   grid.innerHTML = '';
   generateSlots().forEach(slot => {
     const div = document.createElement('div');
-    div.className = 'slot' + (taken.has(slot) ? ' taken' : '') + (slot === chosen ? ' selected' : '');
-    div.textContent = slot;
-    if (taken.has(slot)) {
+    const isTaken = taken.has(slot);
+    div.className = 'slot' + (isTaken ? ' taken' : '') + (slot === chosen ? ' selected' : '');
+    if (isTaken) {
       div.innerHTML = `${slot}<span class="taken-label">заето</span>`;
-    }
-    if (!taken.has(slot)) {
+    } else {
+      div.textContent = slot;
       div.onclick = () => selectSlot(slot);
     }
     grid.appendChild(div);
@@ -296,7 +296,7 @@ function selectSlot(slot) {
   renderSlots();
 }
 
-// ── Weight → estimate ─────────────────────────────────────
+// ── Estimate ──────────────────────────────────────────────
 function updateEstimate() {
   const kg = parseFloat(document.getElementById('weight').value);
   const box = document.getElementById('estimate-box');
@@ -312,39 +312,47 @@ function updateEstimate() {
 
 document.getElementById('weight').addEventListener('input', updateEstimate);
 
-// ── Form submit ───────────────────────────────────────────
-document.getElementById('laundry-form').addEventListener('submit', function(e) {
+// ── Submit ────────────────────────────────────────────────
+document.getElementById('laundry-form').addEventListener('submit', async function(e) {
   e.preventDefault();
   const services = [...document.querySelectorAll('input[name="service"]:checked')].map(c => c.value);
   if (services.length === 0) { alert('Моля изберете поне една услуга.'); return; }
   const slot = document.getElementById('chosen-slot').value;
   if (!slot) { alert('Моля изберете час.'); return; }
 
-  const { minPerKg, pricePerKg } = getSettings();
+  const { pricePerKg } = getSettings();
   const kg = parseFloat(document.getElementById('weight').value);
   const price = (kg * pricePerKg).toFixed(2);
 
-  const reservation = {
-    date: todayStr(),
-    slot,
-    name: document.getElementById('name').value.trim(),
-    phone: document.getElementById('phone').value.trim(),
-    services: services.join(', '),
-    weight: kg,
-    price,
-    notes: document.getElementById('notes').value.trim(),
-    createdAt: new Date().toLocaleString('bg-BG'),
-  };
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Запазване...';
 
-  saveReservation(reservation);
+  try {
+    await sbFetch('reservations', {
+      method: 'POST',
+      body: JSON.stringify({
+        date: todayStr(),
+        slot,
+        name: document.getElementById('name').value.trim(),
+        phone: document.getElementById('phone').value.trim(),
+        services: services.join(', '),
+        weight: kg,
+        price,
+        notes: document.getElementById('notes').value.trim(),
+      }),
+    });
 
-  document.getElementById('laundry-form').style.display = 'none';
-  const msg = document.getElementById('success-msg');
-  msg.style.display = 'block';
-  document.getElementById('success-detail').textContent =
-    `${reservation.name} — ${slot} | ${services.join(', ')} | ${kg} кг | ${price} лв.`;
-
-  renderAdmin();
+    document.getElementById('laundry-form').style.display = 'none';
+    const msg = document.getElementById('success-msg');
+    msg.style.display = 'block';
+    document.getElementById('success-detail').textContent =
+      `${document.getElementById('name').value.trim()} — ${slot} | ${services.join(', ')} | ${kg} кг | ${price} лв.`;
+  } catch(err) {
+    alert('Грешка при записване: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '✅ Изпрати резервацията';
+  }
 });
 
 function resetForm() {
@@ -353,45 +361,54 @@ function resetForm() {
   document.getElementById('estimate-box').style.display = 'none';
   document.getElementById('success-msg').style.display = 'none';
   document.getElementById('laundry-form').style.display = 'block';
+  document.getElementById('submit-btn').disabled = false;
+  document.getElementById('submit-btn').textContent = '✅ Изпрати резервацията';
   renderSlots();
 }
 
-// ── Admin panel ───────────────────────────────────────────
-function toggleAdmin() {
+// ── Admin ─────────────────────────────────────────────────
+let adminData = [];
+
+async function toggleAdmin() {
   const p = document.getElementById('admin-panel');
   p.style.display = p.style.display === 'none' ? 'block' : 'none';
-  renderAdmin();
-  const s = getSettings();
-  document.getElementById('min-per-kg').value = s.minPerKg;
-  document.getElementById('price-per-kg').value = s.pricePerKg;
+  if (p.style.display === 'block') {
+    const s = getSettings();
+    document.getElementById('min-per-kg').value = s.minPerKg;
+    document.getElementById('price-per-kg').value = s.pricePerKg;
+    await renderAdmin();
+  }
 }
 
-function renderAdmin() {
+async function renderAdmin() {
   const tbody = document.getElementById('reservations-body');
-  const list = getReservations();
-  if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="color:#9ca3af;padding:16px">Няма резервации.</td></tr>';
-    return;
+  try {
+    adminData = await sbFetch('reservations?order=created_at.desc&select=*');
+    if (!adminData.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:#9ca3af;padding:16px">Няма резервации.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = adminData.map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td><strong>${r.slot}</strong></td>
+        <td>${r.name}</td>
+        <td>${r.phone}</td>
+        <td>${r.services}</td>
+        <td>${r.weight} кг</td>
+        <td>${r.price} лв.</td>
+        <td>${r.notes || '—'}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#ef4444">Грешка: ${e.message}</td></tr>`;
   }
-  tbody.innerHTML = list.slice().reverse().map(r => `
-    <tr>
-      <td>${r.date}</td>
-      <td><strong>${r.slot}</strong></td>
-      <td>${r.name}</td>
-      <td>${r.phone}</td>
-      <td>${r.services}</td>
-      <td>${r.weight} кг</td>
-      <td>${r.price} лв.</td>
-      <td>${r.notes || '—'}</td>
-    </tr>
-  `).join('');
 }
 
 function exportCSV() {
-  const list = getReservations();
-  if (!list.length) { alert('Няма резервации за експорт.'); return; }
+  if (!adminData.length) { alert('Няма резервации за експорт.'); return; }
   const header = 'Дата,Час,Клиент,Телефон,Услуги,Кг,Цена,Бележка\n';
-  const rows = list.map(r =>
+  const rows = adminData.map(r =>
     [r.date, r.slot, r.name, r.phone, r.services, r.weight, r.price, r.notes || '']
     .map(v => `"${String(v).replace(/"/g,'""')}"`)
     .join(',')
@@ -401,14 +418,6 @@ function exportCSV() {
   a.href = URL.createObjectURL(blob);
   a.download = `prane-rezervacii-${todayStr()}.csv`;
   a.click();
-}
-
-function clearAll() {
-  if (confirm('Сигурни ли сте? Всички резервации ще бъдат изтрити!')) {
-    localStorage.removeItem('reservations');
-    renderAdmin();
-    renderSlots();
-  }
 }
 
 // ── Init ──────────────────────────────────────────────────
